@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from tools.fetch_logs import fetch_failed_logs
 from prompts.diagnose import build_prompt
 import anthropic
@@ -13,18 +13,11 @@ GITLAB_TOKEN = os.getenv("GITLAB_TOKEN")
 
 app = FastAPI()
 
-@app.post("/webhook")
-async def handle_webhook(request: Request):
-    payload = await request.json()
-
-    if payload["object_attributes"]["status"] != "failed":
-        return {"status" : "ignored"}
-
+async def process_pipeline(payload):
     project_id = payload["project"]["id"]
     pipeline_id = payload["object_attributes"]["id"]
 
     logs = await fetch_failed_logs(project_id, pipeline_id)
-
     prompt = build_prompt(logs)
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -33,7 +26,7 @@ async def handle_webhook(request: Request):
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}]
     )
-    response_text = message.content[0].text 
+    response_text = message.content[0].text
 
     commit_sha = payload["commit"]["id"]
     base_url = "https://gitlab.com/api/v4"
@@ -41,6 +34,15 @@ async def handle_webhook(request: Request):
     comment_url = f"{base_url}/projects/{project_id}/repository/commits/{commit_sha}/comments"
 
     async with httpx.AsyncClient() as http_client:
-        await client.post(comment_url, json={"note": response_text}, headers=headers)
+        await http_client.post(comment_url, json={"note": response_text}, headers=headers)
 
+@app.post("/webhook")
+async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
+    payload = await request.json()
+    print(payload)
+
+    if payload["object_attributes"]["status"] != "failed":
+        return {"status": "ignored"}
+
+    background_tasks.add_task(process_pipeline, payload)
     return {"status": "ok"}

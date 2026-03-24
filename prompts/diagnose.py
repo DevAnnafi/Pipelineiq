@@ -4,6 +4,6 @@ def build_prompt(failed_logs):
     for job in failed_logs:
         prompt += f"Job: {job['job_name']}\nLog:\n{job['log']}\n\n"
 
-    end_prompt += "For each failed job, provide: 1) root cause 2) suggested fix"
+    prompt += "For each failed job, provide: 1) root cause 2) suggested fix"
 
     return prompt
